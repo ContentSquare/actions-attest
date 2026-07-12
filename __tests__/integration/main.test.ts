@@ -449,5 +449,96 @@ describe('run', () => {
         })
       )
     })
+
+    it('should fail when subject-digest uses sha512 with push-to-registry', async () => {
+      await run({
+        ...registryInputs,
+        subjectDigest: `sha512:${'a'.repeat(128)}`
+      })
+
+      expect(setFailedMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/push-to-registry.*sha256/)
+        })
+      )
+      expect(mockAttest).not.toHaveBeenCalled()
+    })
+
+    it('should fail when subject-checksums contain sha512 with push-to-registry', async () => {
+      const sha512 = 'a'.repeat(128)
+      await run({
+        ...defaultInputs,
+        subjectChecksums: `${sha512}  artifact-amd64`,
+        pushToRegistry: true,
+        predicateType: 'https://example.com/predicate',
+        predicate: '{}'
+      })
+
+      expect(setFailedMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/push-to-registry.*sha256/)
+        })
+      )
+      expect(mockAttest).not.toHaveBeenCalled()
+    })
+
+    it('should fail when mixed checksums contain any sha512 with push-to-registry', async () => {
+      const sha256 = 'a'.repeat(64)
+      const sha512 = 'b'.repeat(128)
+      await run({
+        ...defaultInputs,
+        subjectChecksums: `${sha256}  artifact-one\n${sha512}  artifact-two`,
+        pushToRegistry: true,
+        predicateType: 'https://example.com/predicate',
+        predicate: '{}'
+      })
+
+      expect(setFailedMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/push-to-registry.*sha256/)
+        })
+      )
+      expect(mockAttest).not.toHaveBeenCalled()
+    })
+
+    it('should accept sha256 subject-path with push-to-registry', async () => {
+      const filePath = path.join(tempDir, 'image-artifact.bin')
+      await fs.writeFile(filePath, 'test content')
+
+      await run({
+        ...defaultInputs,
+        subjectPath: filePath,
+        subjectName: 'ghcr.io/test-owner/test-repo',
+        pushToRegistry: true,
+        predicateType: 'https://example.com/predicate',
+        predicate: '{}'
+      })
+
+      expect(setFailedMock).not.toHaveBeenCalled()
+      expect(mockAttest).toHaveBeenCalled()
+    })
+  })
+
+  describe('non-sha256 digest without registry', () => {
+    it('should succeed with sha512 subject-digest when not pushing to registry', async () => {
+      await run({
+        ...defaultInputs,
+        subjectName: 'artifact',
+        subjectDigest: `sha512:${'a'.repeat(128)}`,
+        predicateType: 'https://example.com/predicate',
+        predicate: '{}'
+      })
+
+      expect(setFailedMock).not.toHaveBeenCalled()
+      expect(mockAttest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subjects: [
+            expect.objectContaining({
+              digest: { sha512: 'a'.repeat(128) }
+            })
+          ]
+        })
+      )
+    })
   })
 })

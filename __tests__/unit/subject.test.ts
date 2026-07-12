@@ -55,6 +55,161 @@ describe('subjectFromInputs', () => {
     })
   })
 
+  describe('artifacts list fallback', () => {
+    const ENV_KEY = 'GITHUB_ARTIFACTS_LIST'
+    const originalEnv = process.env
+
+    beforeEach(() => {
+      process.env = { ...originalEnv }
+    })
+
+    afterEach(() => {
+      process.env = originalEnv
+    })
+
+    it('should use artifacts list when no explicit inputs are provided', async () => {
+      const filePath = path.join(tempDir, 'artifacts.json')
+      await fs.writeFile(
+        filePath,
+        JSON.stringify({
+          version: 1,
+          subjects: [
+            {
+              name: 'discovered-binary',
+              kind: 'file',
+              digest: `sha256:${'a'.repeat(64)}`
+            }
+          ]
+        })
+      )
+      process.env[ENV_KEY] = filePath
+
+      const subjects = await subjectFromInputs(blankInputs)
+
+      expect(subjects).toHaveLength(1)
+      expect(subjects[0].name).toBe('discovered-binary')
+    })
+
+    it('should throw standard error when env is unset and no explicit inputs', async () => {
+      delete process.env[ENV_KEY]
+
+      await expect(subjectFromInputs(blankInputs)).rejects.toThrow(
+        /one of subject-path, subject-digest, or subject-checksums must be provided/i
+      )
+    })
+
+    it('should throw standard error when artifacts list is empty', async () => {
+      const filePath = path.join(tempDir, 'empty.json')
+      await fs.writeFile(
+        filePath,
+        JSON.stringify({ version: 1, subjects: [] })
+      )
+      process.env[ENV_KEY] = filePath
+
+      await expect(subjectFromInputs(blankInputs)).rejects.toThrow(
+        /one of subject-path, subject-digest, or subject-checksums must be provided/i
+      )
+    })
+
+    it('should ignore artifacts list when subject-digest is provided', async () => {
+      const filePath = path.join(tempDir, 'artifacts.json')
+      await fs.writeFile(
+        filePath,
+        JSON.stringify({
+          version: 1,
+          subjects: [
+            {
+              name: 'should-not-appear',
+              kind: 'file',
+              digest: `sha256:${'f'.repeat(64)}`
+            }
+          ]
+        })
+      )
+      process.env[ENV_KEY] = filePath
+
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'explicit-artifact',
+        subjectDigest: `sha256:${'a'.repeat(64)}`
+      }
+
+      const subjects = await subjectFromInputs(inputs)
+
+      expect(subjects).toHaveLength(1)
+      expect(subjects[0].name).toBe('explicit-artifact')
+    })
+
+    it('should ignore artifacts list when subject-path is provided', async () => {
+      const artifactFile = path.join(tempDir, 'real-artifact.bin')
+      await fs.writeFile(artifactFile, 'content')
+
+      const listPath = path.join(tempDir, 'artifacts.json')
+      await fs.writeFile(
+        listPath,
+        JSON.stringify({
+          version: 1,
+          subjects: [
+            {
+              name: 'should-not-appear',
+              kind: 'file',
+              digest: `sha256:${'f'.repeat(64)}`
+            }
+          ]
+        })
+      )
+      process.env[ENV_KEY] = listPath
+
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectPath: artifactFile
+      }
+
+      const subjects = await subjectFromInputs(inputs)
+
+      expect(subjects).toHaveLength(1)
+      expect(subjects[0].name).toBe('real-artifact.bin')
+    })
+
+    it('should ignore artifacts list when subject-checksums is provided', async () => {
+      const listPath = path.join(tempDir, 'artifacts.json')
+      await fs.writeFile(
+        listPath,
+        JSON.stringify({
+          version: 1,
+          subjects: [
+            {
+              name: 'should-not-appear',
+              kind: 'file',
+              digest: `sha256:${'f'.repeat(64)}`
+            }
+          ]
+        })
+      )
+      process.env[ENV_KEY] = listPath
+
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectChecksums: `${'a'.repeat(64)}  explicit-checksums-artifact`
+      }
+
+      const subjects = await subjectFromInputs(inputs)
+
+      expect(subjects).toHaveLength(1)
+      expect(subjects[0].name).toBe('explicit-checksums-artifact')
+    })
+
+    it('should propagate parse errors from malformed artifacts list', async () => {
+      const filePath = path.join(tempDir, 'bad.json')
+      await fs.writeFile(filePath, '{bad json}')
+      process.env[ENV_KEY] = filePath
+
+      await expect(subjectFromInputs(blankInputs)).rejects.toThrow(
+        /invalid JSON/
+      )
+    })
+  })
+
   describe('with subject-digest', () => {
     const validDigest = 'sha256:7d070f6b64d9bcc530fe99cc21eaaa4b3c364e0b2d367d7735671fa202a03b32'
 
@@ -87,6 +242,48 @@ describe('subjectFromInputs', () => {
       expect(subjects[0].name).toBe('ghcr.io/foo/bar')
     })
 
+    // Table-driven acceptance tests for all six canonical SHA-2 algorithms
+    const algorithmTests: { algorithm: string; hexLength: number }[] = [
+      { algorithm: 'sha224', hexLength: 56 },
+      { algorithm: 'sha256', hexLength: 64 },
+      { algorithm: 'sha384', hexLength: 96 },
+      { algorithm: 'sha512', hexLength: 128 },
+      { algorithm: 'sha512_224', hexLength: 56 },
+      { algorithm: 'sha512_256', hexLength: 64 }
+    ]
+
+    it.each(algorithmTests)(
+      'should accept canonical $algorithm digest ($hexLength hex chars)',
+      async ({ algorithm, hexLength }) => {
+        const hex = 'a'.repeat(hexLength)
+        const inputs: SubjectInputs = {
+          ...blankInputs,
+          subjectName: 'artifact',
+          subjectDigest: `${algorithm}:${hex}`
+        }
+
+        const subjects = await subjectFromInputs(inputs)
+
+        expect(subjects).toHaveLength(1)
+        expect(subjects[0].digest).toEqual({ [algorithm]: hex })
+      }
+    )
+
+    it('should accept uppercase hex digits in digest', async () => {
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'artifact',
+        subjectDigest: 'sha256:7D070F6B64D9BCC530FE99CC21EAAA4B3C364E0B2D367D7735671FA202A03B32'
+      }
+
+      const subjects = await subjectFromInputs(inputs)
+
+      expect(subjects).toHaveLength(1)
+      expect(subjects[0].digest).toEqual({
+        sha256: '7D070F6B64D9BCC530FE99CC21EAAA4B3C364E0B2D367D7735671FA202A03B32'
+      })
+    })
+
     it('should throw for malformed digest format', async () => {
       const inputs: SubjectInputs = {
         ...blankInputs,
@@ -107,7 +304,7 @@ describe('subjectFromInputs', () => {
       }
 
       await expect(subjectFromInputs(inputs)).rejects.toThrow(
-        /subject-digest must be in the format/
+        /subject-digest has unsupported algorithm "md5"/
       )
     })
 
@@ -116,6 +313,103 @@ describe('subjectFromInputs', () => {
         ...blankInputs,
         subjectName: 'artifact',
         subjectDigest: 'sha256:deadbeef'
+      }
+
+      await expect(subjectFromInputs(inputs)).rejects.toThrow(
+        /subject-digest has invalid length for algorithm "sha256"/
+      )
+    })
+
+    it('should reject uppercase algorithm names', async () => {
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'artifact',
+        subjectDigest: `SHA256:${'a'.repeat(64)}`
+      }
+
+      await expect(subjectFromInputs(inputs)).rejects.toThrow(
+        /subject-digest has unsupported algorithm "SHA256"/
+      )
+    })
+
+    it('should reject non-canonical algorithm aliases', async () => {
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'artifact',
+        subjectDigest: `sha-256:${'a'.repeat(64)}`
+      }
+
+      await expect(subjectFromInputs(inputs)).rejects.toThrow(
+        /subject-digest has unsupported algorithm "sha-256"/
+      )
+    })
+
+    it('should reject extra colons in digest', async () => {
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'artifact',
+        subjectDigest: `sha256:${'a'.repeat(32)}:${'b'.repeat(32)}`
+      }
+
+      await expect(subjectFromInputs(inputs)).rejects.toThrow(
+        /subject-digest must be in the format/
+      )
+    })
+
+    it('should reject empty algorithm component', async () => {
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'artifact',
+        subjectDigest: `:${'a'.repeat(64)}`
+      }
+
+      await expect(subjectFromInputs(inputs)).rejects.toThrow(
+        /subject-digest must be in the format/
+      )
+    })
+
+    it('should reject empty digest component', async () => {
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'artifact',
+        subjectDigest: 'sha256:'
+      }
+
+      await expect(subjectFromInputs(inputs)).rejects.toThrow(
+        /subject-digest must be in the format/
+      )
+    })
+
+    it('should reject non-hex characters in digest', async () => {
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'artifact',
+        subjectDigest: `sha256:${'g'.repeat(64)}`
+      }
+
+      await expect(subjectFromInputs(inputs)).rejects.toThrow(
+        /subject-digest has invalid hex digits/
+      )
+    })
+
+    it('should reject npm SRI format', async () => {
+      // npm SRI: "sha512-<base64>" is not the canonical "algorithm:hex" form
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'artifact',
+        subjectDigest: 'sha512-n4bQgYhMfWtsxiT7nrnlA0leSv4+C2CDkMXOUOEJoiQ='
+      }
+
+      await expect(subjectFromInputs(inputs)).rejects.toThrow(
+        /subject-digest must be in the format/
+      )
+    })
+
+    it('should reject digest with no colon separator', async () => {
+      const inputs: SubjectInputs = {
+        ...blankInputs,
+        subjectName: 'artifact',
+        subjectDigest: `sha256${'a'.repeat(64)}`
       }
 
       await expect(subjectFromInputs(inputs)).rejects.toThrow(

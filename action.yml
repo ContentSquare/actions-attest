@@ -9,15 +9,21 @@ inputs:
   subject-path:
     description: >
       Path to the artifact serving as the subject of the attestation. Must
-      specify exactly one of "subject-path",  "subject-digest", or
+      specify exactly one of "subject-path", "subject-digest", or
       "subject-checksums". May contain a glob pattern or list of paths (total
-      subject count cannot exceed 1024).
+      subject count cannot exceed 1024). When none of these inputs are
+      provided, the action falls back to subjects discovered via the
+      runner-provided $GITHUB_ARTIFACTS_LIST environment variable.
     required: false
   subject-digest:
     description: >
       Digest of the subject for the attestation. Must be in the form
-      "algorithm:hex_digest" (e.g. "sha256:abc123..."). Must specify exactly one
-      of "subject-path", "subject-digest", or "subject-checksums".
+      "algorithm:hex_digest" (e.g. "sha256:abc123..."). Supported algorithms
+      are sha224, sha256, sha384, sha512, sha512_224, and sha512_256 (canonical
+      in-toto names, lowercase only). Only hexadecimal digests are accepted; npm
+      SRI format is not supported. When "push-to-registry" is true, the digest
+      algorithm must be sha256. Must specify exactly one of "subject-path",
+      "subject-digest", or "subject-checksums".
     required: false
   subject-name:
     description: >
@@ -27,8 +33,10 @@ inputs:
   subject-checksums:
     description: >
       Path to checksums file containing digest and name of subjects for
-      attestation. Must specify exactly one of "subject-path", "subject-digest",
-      or "subject-checksums".
+      attestation. Digest algorithm is inferred from hex length (sha256 for 64
+      characters, sha512 for 128 characters). When "push-to-registry" is true,
+      all checksums must be sha256. Must specify exactly one of "subject-path",
+      "subject-digest", or "subject-checksums".
     required: false
   subject-version:
     description: >

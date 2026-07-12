@@ -98,10 +98,16 @@ See [action.yml](action.yml)
     # specify exactly one of "subject-path", "subject-digest", or
     # "subject-checksums". May contain a glob pattern or list of paths
     # (total subject count cannot exceed 1024).
+    # When none of these inputs are provided, subjects are automatically
+    # discovered from the runner-provided $GITHUB_ARTIFACTS_LIST file.
     subject-path:
 
-    # SHA256 digest of the subject for the attestation. Must be in the form
-    # "sha256:hex_digest" (e.g. "sha256:abc123..."). Must specify exactly one
+    # Digest of the subject for the attestation. Must be in the form
+    # "algorithm:hex_digest" (e.g. "sha256:abc123..."). Supported algorithms
+    # are sha224, sha256, sha384, sha512, sha512_224, and sha512_256
+    # (canonical in-toto names, lowercase only). Only hexadecimal digests
+    # are accepted; npm SRI format is not supported. When "push-to-registry"
+    # is true, the digest algorithm must be sha256. Must specify exactly one
     # of "subject-path", "subject-digest", or "subject-checksums".
     subject-digest:
 
@@ -110,8 +116,10 @@ See [action.yml](action.yml)
     subject-name:
 
     # Path to checksums file containing digest and name of subjects for
-    # attestation. Must specify exactly one of "subject-path", "subject-digest",
-    # or "subject-checksums".
+    # attestation. Digest algorithm is inferred from hex length (sha256 for
+    # 64 characters, sha512 for 128 characters). When "push-to-registry" is
+    # true, all checksums must be sha256. Must specify exactly one of
+    # "subject-path", "subject-digest", or "subject-checksums".
     subject-checksums:
 
     # Path to the JSON-formatted SBOM file (SPDX or CycloneDX) to attest.
@@ -136,7 +144,7 @@ See [action.yml](action.yml)
 
     # Whether to push the attestation to the image registry. Requires that the
     # "subject-name" parameter specify the fully-qualified image name and that
-    # the "subject-digest" parameter be specified. Defaults to false.
+    # all subjects have sha256 digests. Defaults to false.
     push-to-registry:
 
     # Whether to create a storage record for the artifact.
@@ -182,6 +190,44 @@ No more than 1024 subjects can be attested at the same time.
 
 Whether supplied via the `predicate` or `predicatePath` input, the predicate
 string cannot exceed 16MB.
+
+## Automatic Subject Discovery
+
+When none of the explicit subject inputs (`subject-path`, `subject-digest`,
+`subject-checksums`) are provided, the action automatically discovers subjects
+from the runner-provided `$GITHUB_ARTIFACTS_LIST` environment variable. This
+variable is set by the GitHub Actions runner (see
+[actions/runner#4527](https://github.com/actions/runner/pull/4527)) and points
+to a JSON file describing artifacts produced during the workflow.
+
+> [!NOTE]
+> The `$GITHUB_ARTIFACTS_LIST` variable is distinct from `$GITHUB_ARTIFACTS`,
+> which is the directory where the runner writes artifact content. The
+> `$GITHUB_ARTIFACTS_LIST` file is a structured JSON manifest that the runner
+> produces to describe the artifacts and their digests.
+
+Explicit subject inputs always take precedence — when any of `subject-path`,
+`subject-digest`, or `subject-checksums` is provided, the `$GITHUB_ARTIFACTS_LIST`
+file is never read.
+
+The artifacts list file must be a JSON object with the following shape:
+
+```json
+{
+  "version": 1,
+  "subjects": [
+    {
+      "name": "my-binary-linux-amd64",
+      "digest": "sha256:abc123...",
+      "kind": "file"
+    }
+  ]
+}
+```
+
+Each entry must include a `name`, a `digest` in `algorithm:hex` format, and a
+`kind` of either `file` or `oci`. File-kind entries must use `sha256` digests;
+OCI-kind entries may use `sha256`, `sha384`, or `sha512`.
 
 ## Examples
 
