@@ -51,13 +51,19 @@ jobs:
           # Download OUTSIDE the checkout workspace: the later actions/checkout
           # step runs `git clean -ffdx`, which would delete an untracked
           # `incoming/` dir inside the workspace before we can use it.
-          path: ${{ runner.temp }}/incoming
+          #
+          # upload-artifact roots an artifact at the least common ancestor of
+          # its input paths, so `rebuilt-dist` holds the *contents* of dist/.
+          # Extract into `incoming/dist` to restore the expected layout.
+          path: ${{ runner.temp }}/incoming/dist
 
       # No artifact => the builder found dist/ already up to date. Nothing to do.
+      # Key off the bundle entrypoint rather than the directory: an unexpected
+      # artifact layout then no-ops instead of committing a malformed dist/.
       - name: Check for artifact
         id: check
         run: |
-          if [ -d "${{ runner.temp }}/incoming/dist" ]; then
+          if [ -f "${{ runner.temp }}/incoming/dist/index.js" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
